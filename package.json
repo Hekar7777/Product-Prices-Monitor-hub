@@ -2,6 +2,7 @@
   "name": "flipkart-price-monitor",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Monitors Flipkart product URLs and notifies on every listed price change. No target prices, no thresholds.",
   "workspaces": [
     "server",

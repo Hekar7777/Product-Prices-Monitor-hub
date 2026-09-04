@@ -41,6 +41,10 @@ export function createSystemRouter(container: AppContainer): Router {
       const healthy = database === 'ok';
 
       res.status(healthy ? 200 : 503).json({
+        // Simple boolean form, so any caller (an uptime check, a load
+        // balancer, `curl`) can consume this endpoint without knowing the
+        // richer shape below.
+        ok: healthy,
         status: healthy ? 'ok' : 'degraded',
         uptimeSeconds: Math.round(process.uptime()),
         database,
