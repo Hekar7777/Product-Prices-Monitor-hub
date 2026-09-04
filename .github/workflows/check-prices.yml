@@ -1,0 +1,43 @@
+name: Check Flipkart prices
+
+# Runs on a schedule and simply calls the deployed server's cron-triggered
+# check endpoint. All of the actual work (fetching Flipkart pages, comparing
+# prices, writing to Supabase, sending Web Push notifications) happens inside
+# that request - this workflow only exists to wake it up on a timer, since
+# the server itself no longer self-schedules.
+on:
+  schedule:
+    # Every 15 minutes. GitHub Actions cron syntax; times are UTC and,
+    # especially at busy periods, may fire a few minutes late - this is a
+    # known GitHub Actions limitation, not a bug in this workflow.
+    - cron: '*/15 * * * *'
+  # Lets you trigger a check manually from the Actions tab without waiting
+  # for the schedule.
+  workflow_dispatch:
+
+jobs:
+  check-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the price-check endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL and CRON_SECRET repository secrets must both be set." >&2
+            exit 1
+          fi
+
+          status=$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST "$APP_URL/api/cron/check-prices" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -H "Content-Type: application/json")
+
+          echo "HTTP status: $status"
+          cat response.json
+
+          if [ "$status" -ge 400 ]; then
+            echo "Price check endpoint returned an error status." >&2
+            exit 1
+          fi

@@ -1,0 +1,40 @@
+{
+  "name": "@flipkart-monitor/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch-path=src --import tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --disable-warning=ExperimentalWarning dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:e2e": "tsx --disable-warning=ExperimentalWarning scripts/e2eVerify.ts",
+    "reliability": "tsx --disable-warning=ExperimentalWarning scripts/reliability/run.ts",
+    "reliability:summarise": "tsx --disable-warning=ExperimentalWarning scripts/reliability/summarise.ts",
+    "playwright:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.47.10",
+    "cheerio": "1.0.0",
+    "cors": "2.8.5",
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "playwright": "1.49.1",
+    "web-push": "3.6.7",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.17",
+    "@types/express": "4.17.21",
+    "@types/node": "22.10.5",
+    "@types/supertest": "6.0.2",
+    "@types/web-push": "3.6.4",
+    "supertest": "7.0.0",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  }
+}

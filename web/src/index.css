@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+
+  /* Keep keyboard focus clearly visible everywhere. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-surface;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border
+           bg-surfaceAlt px-3 py-2 text-sm font-medium text-ink transition-colors
+           hover:bg-border disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-accent/60 bg-accent/90 text-white hover:bg-accent;
+  }
+
+  .btn-danger {
+    @apply border-up/40 text-up hover:bg-up/10;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink
+           placeholder:text-muted/70 focus:border-accent focus:outline-none;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-ink;
+  }
+
+  .hint {
+    @apply mt-1 text-xs text-muted;
+  }
+
+  .th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+
+  .td {
+    @apply px-4 py-3 text-sm align-middle;
+  }
+}
