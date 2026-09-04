@@ -1,5 +1,6 @@
 {
   "framework": null,
+  "installCommand": "cd .. && npm install",
   "buildCommand": "cd .. && npm run build && node scripts/copy-web-dist.mjs",
   "outputDirectory": "../dist",
   "rewrites": [
