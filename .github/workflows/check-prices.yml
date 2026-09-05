@@ -31,7 +31,25 @@ jobs:
             exit 1
           fi
 
-          status=$(curl -sS -o response.json -w '%{http_code}' \
+          # Strip any trailing slash(es) from APP_URL. If the secret is
+          # stored as e.g. "https://example.vercel.app/", concatenating
+          # "$APP_URL/api/cron/check-prices" produces a request path starting
+          # with "//api/...", which vercel.json's rewrite
+          # ({ "source": "/api/(.*)", "destination": "/api" }) does not
+          # match - Vercel returns a 404 before the Express app (and its own
+          # notFoundHandler/cron route) ever sees the request. That failure
+          # mode is silent to anyone testing the endpoint directly with a
+          # URL that happens not to have a trailing slash, which is why it
+          # can go unnoticed while the scheduled job quietly fails every run.
+          APP_URL="${APP_URL%/}"
+
+          # Vercel Functions on this project are configured with
+          # maxDuration: 60 (see vercel.json) - a check run that hits that
+          # limit is terminated and Vercel responds itself, so curl should
+          # never need to wait much longer than that. --max-time bounds the
+          # request so a network-level hang fails this job loudly (and
+          # promptly) instead of running until GitHub's own job timeout.
+          status=$(curl -sS --max-time 90 -o response.json -w '%{http_code}' \
             -X POST "$APP_URL/api/cron/check-prices" \
             -H "x-cron-secret: $CRON_SECRET" \
             -H "Content-Type: application/json")
