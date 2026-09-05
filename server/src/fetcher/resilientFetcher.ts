@@ -17,11 +17,23 @@ import type { FetchOptions, FetchResult, FlipkartProductFetcher } from './types.
  *   - Always throws a `FetchError`, so callers have a single error taxonomy.
  */
 
-/** Failures where a heavier fetcher (a browser) may legitimately do better. */
+/**
+ * Failures where a heavier fetcher (a browser) may legitimately do better.
+ *
+ * `NETWORK_ERROR` (DNS/socket-level failure, connection reset) is included
+ * because a plain HTTP client and a full browser make their requests
+ * through different code paths (Node's fetch/undici vs. Chromium's own
+ * network stack), so a connection-level failure in one is not necessarily
+ * a connection-level failure in the other - it is worth letting Playwright
+ * try independently rather than giving up once the HTTP fetcher's retries
+ * are exhausted. This is a plain retry/escalation change: no proxy, IP
+ * rotation, header spoofing, or other anti-bot bypass is involved.
+ */
 const ESCALATABLE: ReadonlySet<FetchErrorCode> = new Set<FetchErrorCode>([
   'PRICE_NOT_FOUND',
   'PARSE_ERROR',
   'HTTP_ERROR',
+  'NETWORK_ERROR',
 ]);
 
 export interface ResilientFetcherOptions {

@@ -5,5 +5,11 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
+      "maxDuration": 60
+    }
+  }
 }

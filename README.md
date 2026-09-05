@@ -90,7 +90,23 @@ Two implementations are composed with retries and escalation:
 2. **`playwright`** — real Chromium, used when the price is not in the server-rendered HTML.
 
 Set the chain with `FETCH_STRATEGY` (`auto` | `http` | `playwright`). `auto` is the default and
-escalates from HTTP to the browser only when the page loaded but no price could be read.
+escalates from HTTP to the browser when the page loaded but no price could be read, and also on a
+`NETWORK_ERROR` (DNS/socket failure) - a plain HTTP client and a full browser use different network
+stacks, so a connection-level failure in one does not necessarily recur in the other.
+
+### Running the Playwright fetcher on Vercel
+
+Locally and in most Node hosting, the `playwright` desktop package (a devDependency, installed via
+`npm run playwright:install`) supplies Chromium. Vercel Functions cannot run that build - Chromium
+here is launched through `playwright-core` (the driver only, no browser binary) paired with
+[`@sparticuz/chromium`](https://github.com/Sparticuz/chromium), a Chromium build purpose-built for
+serverless runtimes. `PlaywrightFlipkartFetcher` (`server/src/fetcher/playwrightFetcher.ts`)
+switches between the two automatically based on the `VERCEL` system environment variable Vercel
+sets on every deployment - no configuration needed. `vercel.json`'s `functions.api/index.js` block
+bundles `node_modules/@sparticuz/chromium/bin/**` (~66 MB) into the Function via `includeFiles`,
+and sets `maxDuration: 60` since a cold Chromium launch plus a full page load can exceed Vercel's
+10s default. Total Function size with this included is well under Vercel's 250 MB per-Function
+limit.
 
 Because Flipkart changes its markup regularly, five independent parsers are tried in order of
 reliability and the first one that yields a usable price wins: `json-ld` → `initial-state` → `dom`

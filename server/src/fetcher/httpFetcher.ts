@@ -48,6 +48,21 @@ export function classifyHttpStatus(status: number): FetchErrorCode | null {
   return 'HTTP_ERROR';
 }
 
+/**
+ * Node/undici errno-style code on `err.cause`, when present (e.g.
+ * "ECONNRESET", "ENOTFOUND"). This is a short OS/network-level error code,
+ * never a header, URL, cookie, secret, or environment value.
+ */
+function causeCode(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  const cause = err.cause;
+  if (cause && typeof cause === 'object' && 'code' in cause) {
+    const value = (cause as { code?: unknown }).code;
+    return typeof value === 'string' ? value : null;
+  }
+  return null;
+}
+
 /** Maps a thrown `fetch` rejection onto our error taxonomy. */
 function classifyThrown(err: unknown, timedOut: boolean): FetchErrorCode {
   if (timedOut) return 'TIMEOUT';
@@ -165,10 +180,21 @@ export class HttpFlipkartFetcher implements FlipkartProductFetcher {
             ? err.message
             : String(err);
 
-      this.log.debug('HTTP fetch failed', {
+      // Logged at "warn" (not "debug") so this is actually visible in
+      // production, where LOG_LEVEL defaults to "info" and debug-level
+      // records are filtered out before they ever reach stdout/the log
+      // sink. Only specific, known-safe fields are included: the error's
+      // own name/message, and the OS/network errno code on `err.cause`
+      // (e.g. "ECONNRESET"), when present. No headers, no cookies, no
+      // env values, and the URL logged elsewhere in this file is already
+      // the normalised product URL with tracking params stripped - never
+      // one containing secrets or session-identifying query parameters.
+      this.log.warn('HTTP fetch failed', {
         url: normalisedUrl,
         code,
-        ...serialiseError(err),
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        causeCode: causeCode(err),
       });
 
       throw new FetchError(code, message, {

@@ -65,6 +65,31 @@ export interface PlaywrightFetcherOptions {
   defaultTimeoutMs?: number;
   /** Injectable loader so tests can supply a fake Playwright. */
   loadPlaywright?: () => Promise<{ chromium: PwChromium }>;
+  /**
+   * Injectable loader for a serverless-compatible Chromium binary
+   * (`@sparticuz/chromium`), used only when `VERCEL` is set (see
+   * `getBrowser()`). Overridable so tests never touch the real package.
+   */
+  loadServerlessChromium?: () => Promise<ServerlessChromiumModule>;
+}
+
+/** The subset of `@sparticuz/chromium`'s API this fetcher relies on. */
+interface ServerlessChromiumModule {
+  args: string[];
+  executablePath(): Promise<string>;
+}
+
+/**
+ * Whether this process is running as a deployed Vercel Function.
+ *
+ * `VERCEL` is a Vercel System Environment Variable, automatically set to
+ * `"1"` in every deployed environment (Production, Preview, and `vercel
+ * dev`) and never set otherwise - so this is a reliable, zero-configuration
+ * way to pick the serverless-compatible Chromium path without a dedicated
+ * env var of our own.
+ */
+function isRunningOnVercel(): boolean {
+  return process.env.VERCEL === '1';
 }
 
 export class PlaywrightFlipkartFetcher implements FlipkartProductFetcher {
@@ -75,14 +100,25 @@ export class PlaywrightFlipkartFetcher implements FlipkartProductFetcher {
   private readonly headless: boolean;
   private readonly defaultTimeoutMs: number;
   private readonly loadPlaywright: () => Promise<{ chromium: PwChromium }>;
+  private readonly loadServerlessChromium: () => Promise<ServerlessChromiumModule>;
   private readonly log = logger.child({ component: 'fetcher.playwright' });
 
   constructor(options: PlaywrightFetcherOptions = {}) {
     this.headless = options.headless ?? true;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
+    // `playwright-core` is the same driver `playwright` re-exports, minus
+    // the postinstall step that downloads a full desktop Chromium build
+    // (playwright-core ships no browser binary at all). Used unconditionally
+    // - not just on Vercel - because it is a strict subset of `playwright`'s
+    // API surface (see the `Pw*` structural types above), so there is no
+    // behavioural difference locally; only *which* Chromium binary is
+    // launched changes, based on `isRunningOnVercel()` in `getBrowser()`.
     this.loadPlaywright =
       options.loadPlaywright ??
-      (() => import('playwright') as unknown as Promise<{ chromium: PwChromium }>);
+      (() => import('playwright-core') as unknown as Promise<{ chromium: PwChromium }>);
+    this.loadServerlessChromium =
+      options.loadServerlessChromium ??
+      (() => import('@sparticuz/chromium') as unknown as Promise<ServerlessChromiumModule>);
   }
 
   /** Launches Chromium on first use; subsequent calls reuse the instance. */
@@ -102,17 +138,44 @@ export class PlaywrightFlipkartFetcher implements FlipkartProductFetcher {
         );
       }
 
+      // On Vercel, `playwright-core` has no browser binary of its own -
+      // `@sparticuz/chromium` supplies one built for the Lambda/Vercel
+      // Function runtime (see server/README notes on function size limits)
+      // and returns the extra launch args it requires. Off Vercel (local
+      // dev, CI), this branch is skipped entirely and the desktop Chromium
+      // installed by `npm run playwright:install` is used exactly as before.
+      let launchArgs = ['--disable-dev-shm-usage', '--no-sandbox'];
+      let executablePath: string | undefined;
+
+      if (isRunningOnVercel()) {
+        try {
+          const serverlessChromium = await this.loadServerlessChromium();
+          launchArgs = serverlessChromium.args;
+          executablePath = await serverlessChromium.executablePath();
+        } catch (err) {
+          throw new FetchError(
+            'BROWSER_UNAVAILABLE',
+            'The serverless Chromium binary (@sparticuz/chromium) could not be loaded.',
+            { strategy: this.name, cause: err },
+          );
+        }
+      }
+
       try {
         const browser = await chromium.launch({
           headless: this.headless,
-          args: ['--disable-dev-shm-usage', '--no-sandbox'],
+          args: launchArgs,
+          ...(executablePath ? { executablePath } : {}),
         });
         browser.on('disconnected', () => {
           this.browser = null;
           this.log.warn('Chromium disconnected; it will be relaunched on the next check');
         });
         this.browser = browser;
-        this.log.info('Launched Chromium for product extraction', { headless: this.headless });
+        this.log.info('Launched Chromium for product extraction', {
+          headless: this.headless,
+          serverless: isRunningOnVercel(),
+        });
         return browser;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
