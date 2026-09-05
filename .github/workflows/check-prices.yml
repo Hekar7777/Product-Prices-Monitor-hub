@@ -7,10 +7,12 @@ name: Check Flipkart prices
 # the server itself no longer self-schedules.
 on:
   schedule:
-    # Every 15 minutes. GitHub Actions cron syntax; times are UTC and,
-    # especially at busy periods, may fire a few minutes late - this is a
-    # known GitHub Actions limitation, not a bug in this workflow.
-    - cron: '*/15 * * * *'
+    # Every 5 minutes, to match the dashboard's configured check interval.
+    # GitHub Actions cron syntax; times are UTC and, especially at busy
+    # periods, may fire several minutes late or occasionally be skipped
+    # entirely - this is a known GitHub Actions limitation (documented by
+    # GitHub itself for scheduled workflows), not a bug in this workflow.
+    - cron: '*/5 * * * *'
   # Lets you trigger a check manually from the Actions tab without waiting
   # for the schedule.
   workflow_dispatch:
