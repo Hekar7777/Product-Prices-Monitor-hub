@@ -10,23 +10,27 @@ import type { FetchOptions, FetchResult, FlipkartProductFetcher } from './types.
  *   - Retries only genuinely transient failures (timeouts, network blips, 5xx),
  *     with exponential backoff and jitter.
  *   - Escalates to the next fetcher when the page loaded but the price was not
- *     readable - that is the signal that a real browser is needed.
- *   - Never retries CAPTCHA. A verification page is a deliberate signal from
- *     Flipkart, and repeatedly hammering it would be an attempt to work around
- *     a protection mechanism.
+ *     readable, when the request timed out, or when the request was refused at
+ *     the HTTP/edge layer (403/429/5xx) - all signals that a real browser may
+ *     do better. A TIMEOUT escalates immediately (without burning further
+ *     same-strategy retries) so slow HTTP requests cannot eat the whole
+ *     request budget when a browser fallback exists.
+ *   - Never retries a content-served CAPTCHA challenge page. A verification
+ *     page is a deliberate signal from Flipkart, and repeatedly hammering it
+ *     would be an attempt to work around a protection mechanism.
  *   - Always throws a `FetchError`, so callers have a single error taxonomy.
  */
 
 /**
  * Failures where a heavier fetcher (a browser) may legitimately do better.
  *
- * `NETWORK_ERROR` (DNS/socket-level failure, connection reset) is included
- * because a plain HTTP client and a full browser make their requests
- * through different code paths (Node's fetch/undici vs. Chromium's own
- * network stack), so a connection-level failure in one is not necessarily
- * a connection-level failure in the other - it is worth letting Playwright
- * try independently rather than giving up once the HTTP fetcher's retries
- * are exhausted. This is a plain retry/escalation change: no proxy, IP
+ * `NETWORK_ERROR` (DNS/socket-level failure, connection reset) and `TIMEOUT`
+ * are included because a plain HTTP client and a full browser make their
+ * requests through different code paths (Node's fetch/undici vs. Chromium's
+ * own network stack), so a connection-level failure or hang in one is not
+ * necessarily the same in the other - it is worth letting Playwright try
+ * independently rather than giving up once the HTTP fetcher's retries are
+ * exhausted. This is a plain retry/escalation change: no proxy, IP
  * rotation, header spoofing, or other anti-bot bypass is involved.
  */
 const ESCALATABLE: ReadonlySet<FetchErrorCode> = new Set<FetchErrorCode>([
@@ -34,7 +38,27 @@ const ESCALATABLE: ReadonlySet<FetchErrorCode> = new Set<FetchErrorCode>([
   'PARSE_ERROR',
   'HTTP_ERROR',
   'NETWORK_ERROR',
+  'TIMEOUT',
 ]);
+
+/**
+ * Whether `error` should move the check to the next (heavier) fetcher.
+ *
+ * Beyond the `ESCALATABLE` codes above, a `CAPTCHA` error that carries an
+ * HTTP status of 403 is escalated: that means the *request itself* was
+ * refused at the HTTP/edge layer before any body was read, and a browser's
+ * different TLS/network stack may get through, exactly like a NETWORK_ERROR.
+ *
+ * A `CAPTCHA` raised by the HTML parser (no `status`) is different - a
+ * challenge page was actually served to us, so escalating there would mean
+ * trying to work around a protection mechanism. That case stays terminal:
+ * never retried, never escalated, no browser sent at it.
+ */
+function shouldEscalate(error: FetchError, isLastFetcher: boolean): boolean {
+  if (isLastFetcher) return false;
+  if (ESCALATABLE.has(error.code)) return true;
+  return error.code === 'CAPTCHA' && error.status === 403;
+}
 
 export interface ResilientFetcherOptions {
   /** Fetchers tried in order. The first one is the primary. */
@@ -108,7 +132,19 @@ export class ResilientFlipkartFetcher implements FlipkartProductFetcher {
           const error = FetchError.from(err, 'UNKNOWN', normalisedUrl);
           lastError = error;
 
-          const canRetry = isRetryableFetchError(error.code) && attempt < maxAttempts;
+          // A TIMEOUT has already consumed (up to) the whole per-attempt
+          // timeout, so retrying the same strategy risks burning another full
+          // timeout on a stack that just failed slowly. When a heavier
+          // strategy exists, escalate immediately instead - this keeps HTTP
+          // retries from eating the entire request budget (e.g. Vercel's 60s
+          // function cap). Without a fallback the retry still applies, so a
+          // transient timeout is not lost when no browser is available.
+          const skipRetriesForEscalation =
+            error.code === 'TIMEOUT' && !isLastFetcher;
+          const canRetry =
+            !skipRetriesForEscalation &&
+            isRetryableFetchError(error.code) &&
+            attempt < maxAttempts;
 
           this.log.warn('Product fetch attempt failed', {
             url: normalisedUrl,
@@ -126,8 +162,7 @@ export class ResilientFlipkartFetcher implements FlipkartProductFetcher {
         }
       }
 
-      const shouldEscalate = !isLastFetcher && ESCALATABLE.has(lastError.code);
-      if (!shouldEscalate) break;
+      if (!shouldEscalate(lastError, isLastFetcher)) break;
 
       this.log.info('Escalating to the next extraction strategy', {
         url: normalisedUrl,

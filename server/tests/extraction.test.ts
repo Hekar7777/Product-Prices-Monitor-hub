@@ -227,11 +227,14 @@ describe('HttpFlipkartFetcher', () => {
 // Retry / escalation wrapper
 // ---------------------------------------------------------------------------
 
+/** A scripted failure: a code, and optionally an HTTP status (for status-403 etc.). */
+type ScriptedStep = FetchErrorCode | number | { code: FetchErrorCode; status?: number };
+
 class ScriptedFetcher implements FlipkartProductFetcher {
   calls = 0;
   constructor(
     readonly name: string,
-    private readonly script: Array<FetchErrorCode | number>,
+    private readonly script: Array<ScriptedStep>,
   ) {}
 
   async fetchProduct(url: string): Promise<FetchResult> {
@@ -253,6 +256,13 @@ class ScriptedFetcher implements FlipkartProductFetcher {
         },
         meta: { strategy: this.name, attempts: 1, durationMs: 1, httpStatus: 200 },
       };
+    }
+
+    if (typeof step === 'object') {
+      throw new FetchError(step.code, `scripted ${step.code}`, {
+        strategy: this.name,
+        ...(step.status === undefined ? {} : { status: step.status }),
+      });
     }
 
     throw new FetchError(step, `scripted ${step}`, { strategy: this.name });
@@ -293,6 +303,50 @@ describe('ResilientFlipkartFetcher', () => {
 
   it('does not escalate a CAPTCHA to the browser strategy either', async () => {
     const http = new ScriptedFetcher('http', ['CAPTCHA']);
+    const browser = new ScriptedFetcher('playwright', [50000]);
+
+    await expect(resilient([http, browser]).fetchProduct(URL)).rejects.toMatchObject({
+      code: 'CAPTCHA',
+    });
+    expect(browser.calls).toBe(0);
+  });
+
+  it('escalates a TIMEOUT to the browser without retrying HTTP again', async () => {
+    // A TIMEOUT already consumed the full per-attempt timeout, so when a
+    // heavier strategy exists the remaining attempts are not wasted on the
+    // same stack - the check moves straight to the browser.
+    const http = new ScriptedFetcher('http', ['TIMEOUT']);
+    const browser = new ScriptedFetcher('playwright', [64900]);
+
+    const result = await resilient([http, browser]).fetchProduct(URL);
+
+    expect(result.product.price).toBe(64900);
+    expect(result.meta.strategy).toBe('playwright');
+    expect(http.calls).toBe(1);
+    expect(browser.calls).toBe(1);
+    expect(result.meta.attempts).toBe(2);
+  });
+
+  it('escalates a hard HTTP 403 (status-level refusal) to the browser', async () => {
+    // A 403 from classifyHttpStatus means the request was refused at the edge
+    // before any body was read - a browser with a different stack may get
+    // through, so it escalates exactly like a NETWORK_ERROR.
+    const http = new ScriptedFetcher('http', [{ code: 'CAPTCHA', status: 403 }]);
+    const browser = new ScriptedFetcher('playwright', [55990]);
+
+    const result = await resilient([http, browser]).fetchProduct(URL);
+
+    expect(result.product.price).toBe(55990);
+    expect(result.meta.strategy).toBe('playwright');
+    expect(http.calls).toBe(1);
+    expect(browser.calls).toBe(1);
+  });
+
+  it('keeps a content-served CAPTCHA terminal even when it carries a 200', async () => {
+    // A challenge page that was actually served (parser-detected) must never
+    // be escalated to the browser, regardless of the response status it came
+    // with.
+    const http = new ScriptedFetcher('http', [{ code: 'CAPTCHA', status: 200 }]);
     const browser = new ScriptedFetcher('playwright', [50000]);
 
     await expect(resilient([http, browser]).fetchProduct(URL)).rejects.toMatchObject({
